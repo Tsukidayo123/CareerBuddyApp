@@ -1,16 +1,15 @@
-# careerbuddy/ui/tracker.py
-import datetime
-from typing import Tuple, List
+# ui/tracker.py
+from typing import Tuple
+import webbrowser
 
 import customtkinter as ctk
 from tkinter import messagebox
+
 from services.db import CareerDB
 from ui.base import BaseCTkFrame
 from config.theme import get as theme
 
-# ----------------------------------------------------------------------
-# Colours for each column status
-# ----------------------------------------------------------------------
+
 KANBAN_COLORS = {
     "To Apply": "#3498db",
     "Applied": "#f39c12",
@@ -20,383 +19,312 @@ KANBAN_COLORS = {
 }
 
 
-# ----------------------------------------------------------------------
-# Small draggable job card that lives inside a column
-# ----------------------------------------------------------------------
+# ------------------------------------------------------------
+# Job detail popup
+# ------------------------------------------------------------
+class JobDetailDialog(ctk.CTkToplevel):
+    def __init__(self, master, job_data, on_edit):
+        super().__init__(master)
+        self.title("Job Details")
+        self.geometry("450x520")
+        self.configure(fg_color=theme("bg_dark"))
+        self.grab_set()
+
+        job_id, company, role, status, notes, date_added = job_data
+
+        link = ""
+        description = notes or ""
+        if "Link:" in description:
+            parts = description.split("Link:")
+            description = parts[0].strip()
+            link = parts[1].strip()
+
+        ctk.CTkLabel(
+            self,
+            text=f"{role}\n@ {company}",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=theme("text"),
+            wraplength=380,
+            justify="center",
+        ).pack(pady=(20, 10))
+
+        ctk.CTkLabel(
+            self,
+            text=f"Status: {status}",
+            text_color=KANBAN_COLORS.get(status),
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack()
+
+        ctk.CTkLabel(
+            self,
+            text=f"Added: {date_added}",
+            text_color="#888",
+        ).pack(pady=6)
+
+        if link:
+            link_lbl = ctk.CTkLabel(
+                self,
+                text=f"🔗 {link}",
+                text_color=theme("accent"),
+                cursor="hand2",
+            )
+            link_lbl.pack(pady=10)
+            link_lbl.bind("<Button-1>", lambda e: webbrowser.open(link))
+
+        ctk.CTkLabel(self, text="Notes", text_color=theme("text")).pack(pady=(10, 2))
+
+        notes_box = ctk.CTkTextbox(self, height=180)
+        notes_box.pack(fill="x", padx=25)
+        notes_box.insert("0.0", description if description else "No notes added.")
+        notes_box.configure(state="disabled")
+
+        ctk.CTkButton(
+            self,
+            text="✏️ Edit Job",
+            command=lambda: on_edit(job_id),
+        ).pack(pady=20)
+
+
+# ------------------------------------------------------------
+# Job Card (with DRAG HANDLE)
+# ------------------------------------------------------------
 class JobCard(ctk.CTkFrame):
-    """A single job entry shown on a Kanban column."""
-    def __init__(
-        self,
-        parent,
-        job_data: Tuple[int, str, str, str, str, str],
-        on_delete,
-        on_edit,
-        on_drop,
-    ):
+    def __init__(self, parent, job_data, tracker, on_delete, on_open):
+        self.job_data = job_data
+        self.tracker = tracker
+
+        job_id, company, role, status, notes, date_added = job_data
+
         super().__init__(
             parent,
-            fg_color="#2a2a4a",
-            corner_radius=10,
+            fg_color=theme("bg_dark"),
+            corner_radius=18,
             border_width=2,
-            border_color=KANBAN_COLORS.get(job_data[3], "#555"),
+            border_color=KANBAN_COLORS.get(status),
         )
-        self.job_id, self.company, self.role, self.status, self.notes, self.date_added = job_data
-        self.on_delete = on_delete
-        self.on_edit = on_edit
-        self.on_drop = on_drop
 
-        # ---- Header (company + delete) -------------------------------
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=8, pady=(8, 4))
+        header.pack(fill="x", padx=10, pady=(8, 4))
 
-        self.company_lbl = ctk.CTkLabel(
+        ctk.CTkLabel(
             header,
-            text=self.company[:18] + ("…" if len(self.company) > 18 else ""),
-            font=ctk.CTkFont(size=13, weight="bold"),
+            text=company,
             text_color=theme("text"),
-        )
-        self.company_lbl.pack(side="left", fill="x", expand=True)
+            font=ctk.CTkFont(weight="bold"),
+        ).pack(side="left", fill="x", expand=True)
 
-        del_btn = ctk.CTkButton(
+        ctk.CTkButton(
             header,
             text="×",
             width=24,
-            height=24,
+            command=lambda: on_delete(job_id),
             fg_color="transparent",
             hover_color="#e74c3c",
-            text_color="#888",
-            corner_radius=12,
-            command=self._delete,
-        )
-        del_btn.pack(side="right")
+        ).pack(side="right")
 
-        # ---- Role ----------------------------------------------------
-        role_lbl = ctk.CTkLabel(
+        ctk.CTkLabel(
             self,
-            text=self.role[:25] + ("…" if len(self.role) > 25 else ""),
-            font=ctk.CTkFont(size=11),
+            text=role,
             text_color="#aaa",
-            anchor="w",
-        )
-        role_lbl.pack(fill="x", padx=8, pady=(0, 4))
+        ).pack(anchor="w", padx=10)
 
-        # ---- Date ----------------------------------------------------
-        date_lbl = ctk.CTkLabel(
+        # ✅ DRAG HANDLE (BOTTOM EDGE)
+        drag_handle = ctk.CTkFrame(
             self,
-            text=f"📅 {self.date_added}",
-            font=ctk.CTkFont(size=10),
-            text_color="#666",
-            anchor="w",
+            height=10,
+            fg_color=theme("accent"),
+            corner_radius=6,
         )
-        date_lbl.pack(fill="x", padx=8, pady=(0, 8))
+        drag_handle.pack(fill="x", side="bottom", padx=6, pady=6)
 
-        # ---- Drag handling (double‑click to edit) --------------------
-        self.bind("<Double-Button-1>", lambda e: self._edit())
-        self.company_lbl.bind("<Double-Button-1>", lambda e: self._edit())
-        self.role = self.role  # noqa: B018 (keep reference for linters)
+        ctk.CTkLabel(
+            drag_handle,
+            text="⇅ DRAG",
+            font=ctk.CTkFont(size=9, weight="bold"),
+            text_color=theme("bg_dark"),
+        ).pack()
 
-    def _delete(self):
-        if self.on_delete:
-            self.on_delete(self.job_id)
+        # ✅ Right-click drag only from handle
+        drag_handle.bind("<ButtonPress-3>", self._start_drag)
+        drag_handle.bind("<ButtonRelease-3>", self._drop)
 
-    def _edit(self):
-        if self.on_edit:
-            self.on_edit(self.job_id)
+        # ✅ Click anywhere else = open details
+        self.bind("<Button-1>", lambda e: on_open(self.job_data))
+
+    def _start_drag(self, event):
+        self.lift()
+        self.tracker.dragged_job_id = self.job_data[0]
+
+    def _drop(self, event):
+        col = self.tracker.get_column_from_pointer(event)
+        if col:
+            self.tracker.move_job(self.job_data[0], col)
 
 
-# ----------------------------------------------------------------------
-#   Add‑Job dialog (modal)
-# ----------------------------------------------------------------------
+# ------------------------------------------------------------
+# Add Job Dialog (FULL INPUT)
+# ------------------------------------------------------------
 class AddJobDialog(ctk.CTkToplevel):
-    """Modal dialog for inserting a new job."""
-    def __init__(self, master, db: CareerDB, prefill_status: str = "To Apply", on_save=None):
+    def __init__(self, master, db: CareerDB, prefill_status="To Apply", on_save=None):
         super().__init__(master)
         self.db = db
         self.on_save = on_save
         self.title("Add Job")
-        self.geometry("460x420")
+        self.geometry("480x520")
         self.configure(fg_color=theme("bg_dark"))
         self.grab_set()
 
-        ctk.CTkLabel(
-            self,
-            text="Add New Job",
-            font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=theme("text"),
-        ).pack(pady=(20, 10))
-
         frm = ctk.CTkFrame(self, fg_color="transparent")
-        frm.pack(fill="x", padx=30)
+        frm.pack(fill="x", padx=30, pady=20)
 
-        # Company
-        ctk.CTkLabel(frm, text="Company", text_color=theme("text")).pack(fill="x", pady=(10, 2))
-        self.ent_company = ctk.CTkEntry(frm, height=38, corner_radius=8)
-        self.ent_company.pack(fill="x", pady=(0, 5))
+        ctk.CTkLabel(frm, text="Company", text_color=theme("text")).pack(anchor="w")
+        self.ent_company = ctk.CTkEntry(frm)
+        self.ent_company.pack(fill="x", pady=5)
 
-        # Role
-        ctk.CTkLabel(frm, text="Role", text_color=theme("text")).pack(fill="x", pady=(10, 2))
-        self.ent_role = ctk.CTkEntry(frm, height=38, corner_radius=8)
-        self.ent_role.pack(fill="x", pady=(0, 5))
+        ctk.CTkLabel(frm, text="Job Title", text_color=theme("text")).pack(anchor="w")
+        self.ent_role = ctk.CTkEntry(frm)
+        self.ent_role.pack(fill="x", pady=5)
 
-        # Status
-        ctk.CTkLabel(frm, text="Status", text_color=theme("text")).pack(fill="x", pady=(10, 2))
-        self.cmb_status = ctk.CTkComboBox(
-            frm,
-            values=["To Apply", "Applied", "Interviewing", "Offer", "Rejected"],
-            height=38,
-            corner_radius=8,
-        )
+        ctk.CTkLabel(frm, text="Status", text_color=theme("text")).pack(anchor="w")
+        self.cmb_status = ctk.CTkComboBox(frm, values=list(KANBAN_COLORS.keys()))
         self.cmb_status.set(prefill_status)
-        self.cmb_status.pack(fill="x", pady=(0, 5))
+        self.cmb_status.pack(fill="x", pady=5)
 
-        # Notes
-        ctk.CTkLabel(frm, text="Notes (optional)", text_color=theme("text")).pack(fill="x", pady=(10, 2))
-        self.txt_notes = ctk.CTkTextbox(frm, height=80, corner_radius=8)
-        self.txt_notes.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(frm, text="Job Link", text_color=theme("text")).pack(anchor="w")
+        self.ent_link = ctk.CTkEntry(frm)
+        self.ent_link.pack(fill="x", pady=5)
 
-        # Save button
+        ctk.CTkLabel(frm, text="Description / Notes", text_color=theme("text")).pack(anchor="w")
+        self.txt_notes = ctk.CTkTextbox(frm, height=120)
+        self.txt_notes.pack(fill="x", pady=5)
+
         ctk.CTkButton(
             self,
-            text="💾 Save",
+            text="💾 Save Job",
             fg_color=theme("success"),
-            hover_color="#3db389",
-            height=42,
-            corner_radius=8,
-            font=ctk.CTkFont(weight="bold"),
-            command=self._save_job,
+            command=self._save,
         ).pack(pady=20)
 
-    def _save_job(self):
+    def _save(self):
         company = self.ent_company.get().strip()
         role = self.ent_role.get().strip()
         status = self.cmb_status.get()
+        link = self.ent_link.get().strip()
         notes = self.txt_notes.get("0.0", "end").strip()
 
         if not company or not role:
-            messagebox.showwarning("Missing", "Company and Role cannot be empty.")
+            messagebox.showwarning("Missing", "Company and Job Title are required.")
             return
 
-        self.db.add_job(company, role, status, notes=notes)
+        full_notes = f"{notes}\n\nLink: {link}" if link else notes
+
+        self.db.add_job(company, role, status, notes=full_notes)
+
         if self.on_save:
             self.on_save()
+
         self.destroy()
 
 
-# ----------------------------------------------------------------------
-#   Edit‑Job dialog (modal)
-# ----------------------------------------------------------------------
-class EditJobDialog(ctk.CTkToplevel):
-    """Modal dialog for editing an existing job."""
-    def __init__(self, master, job_id: int, db: CareerDB, on_save=None):
-        super().__init__(master)
-        self.db = db
-        self.job_id = job_id
-        self.on_save = on_save
-        self.title("Edit Job")
-        self.geometry("460x460")
-        self.configure(fg_color=theme("bg_dark"))
-        self.grab_set()
-
-        # Load current values
-        with db._conn() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT company, role, status, notes FROM jobs WHERE id=?", (job_id,)
-            )
-            row = cur.fetchone()
-        if not row:
-            messagebox.showerror("Error", "Job not found.")
-            self.destroy()
-            return
-        company, role, status, notes = row
-
-        ctk.CTkLabel(
-            self,
-            text="Edit Job",
-            font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=theme("text"),
-        ).pack(pady=(20, 10))
-
-        frm = ctk.CTkFrame(self, fg_color="transparent")
-        frm.pack(fill="x", padx=30)
-
-        # Company
-        ctk.CTkLabel(frm, text="Company", text_color=theme("text")).pack(fill="x", pady=(10, 2))
-        self.ent_company = ctk.CTkEntry(frm, height=38, corner_radius=8)
-        self.ent_company.insert(0, company)
-        self.ent_company.pack(fill="x", pady=(0, 5))
-
-        # Role
-        ctk.CTkLabel(frm, text="Role", text_color=theme("text")).pack(fill="x", pady=(10, 2))
-        self.ent_role = ctk.CTkEntry(frm, height=38, corner_radius=8)
-        self.ent_role.insert(0, role)
-        self.ent_role.pack(fill="x", pady=(0, 5))
-
-        # Status
-        ctk.CTkLabel(frm, text="Status", text_color=theme("text")).pack(fill="x", pady=(10, 2))
-        self.cmb_status = ctk.CTkComboBox(
-            frm,
-            values=["To Apply", "Applied", "Interviewing", "Offer", "Rejected"],
-            height=38,
-            corner_radius=8,
-        )
-        self.cmb_status.set(status)
-        self.cmb_status.pack(fill="x", pady=(0, 5))
-
-        # Notes
-        ctk.CTkLabel(frm, text="Notes (optional)", text_color=theme("text")).pack(fill="x", pady=(10, 2))
-        self.txt_notes = ctk.CTkTextbox(frm, height=80, corner_radius=8)
-        self.txt_notes.insert("0.0", notes if notes else "")
-        self.txt_notes.pack(fill="x", pady=(0, 10))
-
-        # Save button
-        ctk.CTkButton(
-            self,
-            text="💾 Save Changes",
-            fg_color=theme("success"),
-            hover_color="#3db389",
-            height=42,
-            corner_radius=8,
-            font=ctk.CTkFont(weight="bold"),
-            command=self._save_changes,
-        ).pack(pady=20)
-
-    def _save_changes(self):
-        company = self.ent_company.get().strip()
-        role = self.ent_role.get().strip()
-        status = self.cmb_status.get()
-        notes = self.txt_notes.get("0.0", "end").strip()
-
-        if not company or not role:
-            messagebox.showwarning("Missing", "Company and Role cannot be empty.")
-            return
-
-        self.db.edit_job(self.job_id, company, role, status, notes)
-        if self.on_save:
-            self.on_save()
-        self.destroy()
-
-
-# ----------------------------------------------------------------------
-# Main Kanban view (embedded in the app)
-# ----------------------------------------------------------------------
+# ------------------------------------------------------------
+# Main Board (with instruction banner)
+# ------------------------------------------------------------
 class JobTrackerFrame(BaseCTkFrame):
-    """Kanban board for job applications."""
     def __init__(self, master, db: CareerDB):
         super().__init__(master)
         self.db = db
-        self.statuses = list(KANBAN_COLORS)          # order matters
-        self.columns: dict[str, ctk.CTkFrame] = {}
+        self.statuses = list(KANBAN_COLORS)
+        self.columns = {}
+        self.dragged_job_id = None
 
-        # ----- Header -------------------------------------------------
-        hdr = ctk.CTkFrame(self, fg_color=theme("secondary"), corner_radius=12, height=60)
-        hdr.pack(fill="x", **self.padded())
-        hdr.pack_propagate(False)
+        # ✅ INSTRUCTION BANNER
+        tip = ctk.CTkLabel(
+            self,
+            text="🖱️ Right-click and drag the BOTTOM EDGE of a card to move it between columns",
+            text_color=theme("accent"),
+        )
+        tip.pack(pady=10)
+
+        hdr = ctk.CTkFrame(self, fg_color=theme("secondary"), corner_radius=16)
+        hdr.pack(fill="x", padx=20)
 
         ctk.CTkLabel(
             hdr,
-            text="📋 Job Pipeline",
-            font=ctk.CTkFont(size=18, weight="bold"),
+            text="🃏 Job Deck",
+            font=ctk.CTkFont(size=20, weight="bold"),
             text_color=theme("text"),
-        ).pack(side="left", padx=20, pady=15)
+        ).pack(side="left", padx=20)
 
-        self.btn_add = ctk.CTkButton(
+        ctk.CTkButton(
             hdr,
             text="+ Add Job",
             fg_color=theme("success"),
-            hover_color="#3db389",
-            height=42,
-            corner_radius=8,
             command=self.open_add_dialog,
-        )
-        self.btn_add.pack(side="right", padx=20, pady=12)
+        ).pack(side="right", padx=20)
 
-        # ----- Columns container ---------------------------------------
         board = ctk.CTkFrame(self, fg_color="transparent")
-        board.pack(fill="both", expand=True, **self.padded())
-        board.grid_rowconfigure(0, weight=1)
+        board.pack(fill="both", expand=True, padx=20, pady=20)
 
         for i, status in enumerate(self.statuses):
-            col = self._make_column(board, status, KANBAN_COLORS[status])
-            col.grid(row=0, column=i, sticky="nsew", padx=4, pady=4)
-            board.grid_columnconfigure(i, weight=1, uniform="col")
+            col = self._make_column(board, status)
+            col.grid(row=0, column=i, sticky="nsew", padx=6)
+            board.grid_columnconfigure(i, weight=1)
             self.columns[status] = col
 
-        # Load everything from the DB
         self.load_data()
 
-    # ------------------------------------------------------------------
-    def _make_column(self, parent, title: str, color: str) -> ctk.CTkFrame:
-        col = ctk.CTkFrame(parent, fg_color=theme("bg_medium"), corner_radius=12)
-        header = ctk.CTkFrame(col, fg_color=color, height=40, corner_radius=8)
-        header.pack(fill="x", padx=8, pady=(8, 4))
-        header.pack_propagate(False)
+    def _make_column(self, parent, title):
+        col = ctk.CTkFrame(parent, fg_color=theme("bg_medium"), corner_radius=16)
 
         ctk.CTkLabel(
-            header,
+            col,
             text=title,
-            font=ctk.CTkFont(weight="bold"),
+            fg_color=KANBAN_COLORS.get(title),
             text_color="white",
-        ).pack(side="left", padx=12)
+            corner_radius=12,
+            height=36,
+        ).pack(fill="x", padx=10, pady=10)
 
-        count_lbl = ctk.CTkLabel(
-            header,
-            text="0",
-            font=ctk.CTkFont(weight="bold"),
-            text_color="white",
-            bg_color="#333333",
-            corner_radius=10,
-            width=28,
-        )
-        count_lbl.pack(side="right", padx=8)
-        col.count_lbl = count_lbl
-
-        scroll = ctk.CTkScrollableFrame(col, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=4, pady=4)
+        scroll = ctk.CTkScrollableFrame(col)
+        scroll.pack(fill="both", expand=True)
         col.scroll = scroll
         return col
 
-    # ------------------------------------------------------------------
-    def load_data(self):
-        """Clear every column and repopulate from the DB."""
-        for col in self.columns.values():
-            for child in col.scroll.winfo_children():
-                child.destroy()
-            col.count_lbl.configure(text="0")
+    def get_column_from_pointer(self, event):
+        for status, col in self.columns.items():
+            x1, y1 = col.winfo_rootx(), col.winfo_rooty()
+            x2, y2 = x1 + col.winfo_width(), y1 + col.winfo_height()
+            if x1 < event.x_root < x2 and y1 < event.y_root < y2:
+                return status
+        return None
 
-        jobs = self.db.get_all_jobs()
-        for job in jobs:
-            job_id, company, role, status, notes, date_added = job
-            if status not in self.columns:
-                status = "To Apply"
-            self._add_card(status, job)
-
-    # ------------------------------------------------------------------
-    def _add_card(self, status: str, job_data: Tuple):
-        col = self.columns[status]
-        card = JobCard(
-            col.scroll,
-            job_data,
-            on_delete=self._delete_job,
-            on_edit=self._edit_job,
-            on_drop=self._move_job,
-        )
-        card.pack(fill="x", padx=4, pady=4)
-        col.count_lbl.configure(text=str(len(col.scroll.winfo_children())))
-
-    # ------------------------------------------------------------------
-    # Callback helpers -------------------------------------------------
-    def _delete_job(self, job_id: int):
-        self.db.delete_job(job_id)
-        self.load_data()
-
-    def _move_job(self, job_id: int, new_status: str):
+    def move_job(self, job_id, new_status):
         self.db.update_job_status(job_id, new_status)
         self.load_data()
 
-    def _edit_job(self, job_id: int):
-        EditJobDialog(self, job_id, self.db, on_save=self.load_data)
+    def load_data(self):
+        for col in self.columns.values():
+            for child in col.scroll.winfo_children():
+                child.destroy()
 
-    # ------------------------------------------------------------------
+        jobs = self.db.get_all_jobs()
+        for job in jobs:
+            self._add_card(job[3], job)
+
+    def _add_card(self, status, job_data):
+        col = self.columns.get(status)
+        card = JobCard(col.scroll, job_data, self, self._delete_job, self._open_details)
+        card.pack(fill="x", padx=6, pady=6)
+
+    def _open_details(self, job_data):
+        JobDetailDialog(self, job_data, on_edit=self._edit_job)
+
+    def _delete_job(self, job_id):
+        self.db.delete_job(job_id)
+        self.load_data()
+
+    def _edit_job(self, job_id):
+        AddJobDialog(self, self.db, on_save=self.load_data)
+
     def open_add_dialog(self):
-        AddJobDialog(self, self.db, prefill_status="To Apply", on_save=self.load_data)
+        AddJobDialog(self, self.db, on_save=self.load_data)
