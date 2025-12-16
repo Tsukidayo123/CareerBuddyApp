@@ -53,9 +53,9 @@ def main() -> None:
     idle_timer = time.time()
     drag_started = False
 
-    # ------------------------------
+    
     # Persist Card Position
-    # ------------------------------
+    
     def save_position(x: int, y: int) -> None:
         try:
             with open(STATE_FILE, "w") as f:
@@ -77,9 +77,9 @@ def main() -> None:
         for widget in root.winfo_children():
             widget.destroy()
 
-    # ------------------------------
+    
     # Card Mode
-    # ------------------------------
+    
     def set_card_mode():
         nonlocal drag_started
 
@@ -138,9 +138,9 @@ def main() -> None:
         card_label.bind("<B1-Motion>", do_move)
         card_label.bind("<ButtonRelease-1>", on_release)
 
-    # ------------------------------
+    
     # Full App Mode
-    # ------------------------------
+    
     def set_full_mode():
         clear_root()
         root.overrideredirect(False)
@@ -149,9 +149,9 @@ def main() -> None:
         root.configure(fg_color=theme("bg_dark"))
         build_full_ui()
 
-    # ------------------------------
+    
     # Full UI Layout
-    # ------------------------------
+    
     def build_full_ui():
         sidebar = ctk.CTkFrame(root, width=220, fg_color=theme("bg_medium"))
         sidebar.grid(row=0, column=0, sticky="nsw")
@@ -233,9 +233,9 @@ def main() -> None:
 
         show("tracker")
 
-    # ------------------------------
+    
     # Tray icon
-    # ------------------------------
+    
     def tray_thread():
         def on_show(icon, item):
             root.after(0, set_full_mode)
@@ -257,7 +257,7 @@ def main() -> None:
 
     threading.Thread(target=tray_thread, daemon=True).start()
 
-    # ✅ Start in true card mode
+    # Start in true card mode
     set_card_mode()
 
     logging.info("CareerBuddy UI started")

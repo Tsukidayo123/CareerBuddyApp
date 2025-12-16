@@ -19,9 +19,9 @@ KANBAN_COLORS = {
 }
 
 
-# ------------------------------------------------------------
+
 # Job detail popup (classic dialog – still available if needed)
-# ------------------------------------------------------------
+
 class JobDetailDialog(ctk.CTkToplevel):
     def __init__(self, master, job_data, on_edit):
         super().__init__(master)
@@ -85,9 +85,9 @@ class JobDetailDialog(ctk.CTkToplevel):
         ).pack(pady=20)
 
 
-# ------------------------------------------------------------
+
 # Job Card (card-style with ranks, suits, drag + overlay details)
-# ------------------------------------------------------------
+
 class JobCard(ctk.CTkFrame):
     def __init__(self, parent, job_data, tracker, on_delete, on_open):
         self.job_data = job_data
@@ -352,9 +352,8 @@ class JobCard(ctk.CTkFrame):
             self.tracker.overlay = None
 
 
-# ------------------------------------------------------------
+
 # Add Job Dialog (FULL INPUT)
-# ------------------------------------------------------------
 class AddJobDialog(ctk.CTkToplevel):
     def __init__(self, master, db: CareerDB, prefill_status="To Apply", on_save=None):
         super().__init__(master)
@@ -417,9 +416,7 @@ class AddJobDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-# ------------------------------------------------------------
 # Edit Job Dialog (true edit, not add)
-# ------------------------------------------------------------
 class EditJobDialog(ctk.CTkToplevel):
     def __init__(self, master, job_id: int, db: CareerDB, on_save=None):
         super().__init__(master)
@@ -511,9 +508,9 @@ class EditJobDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-# ------------------------------------------------------------
+
 # Main Board (with instruction banner)
-# ------------------------------------------------------------
+
 class JobTrackerFrame(BaseCTkFrame):
     def __init__(self, master, db: CareerDB):
         super().__init__(master)
