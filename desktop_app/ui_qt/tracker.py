@@ -1,8 +1,9 @@
 # ui_qt/tracker.py
 from __future__ import annotations
+from ui_qt.analytics import log_activity
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 from PySide6.QtCore import Qt, QMimeData, QPoint
 from PySide6.QtGui import QDrag
@@ -56,10 +57,30 @@ class Job:
     company: str
     role: str
     status: str
-    link: str
     notes: str
     date_added: str
 
+class DropScrollArea(QScrollArea):
+    """Forward drag/drop events from the viewport to the owning column."""
+    def __init__(self, owner_column: "DropColumn"):
+        super().__init__()
+        self.owner_column = owner_column
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        self.owner_column.dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        # keep accepting while moving
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self.owner_column.dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        self.owner_column.dropEvent(event)
 
 class AddJobDialog(QDialog):
     def __init__(self, parent: QWidget, db, job: Optional[Job] = None):
@@ -76,12 +97,11 @@ class AddJobDialog(QDialog):
         root.setSpacing(10)
 
         title = QLabel("Add a Job" if job is None else "Edit Job")
-        title.setStyleSheet("font-size:18px;font-weight:800;")
+        title.setStyleSheet("font-size:18px;font-weight:900;color:white;")
         root.addWidget(title)
 
         self.ent_company = QLineEdit()
         self.ent_company.setPlaceholderText("Company")
-
         self.ent_role = QLineEdit()
         self.ent_role.setPlaceholderText("Job Title")
 
@@ -105,8 +125,13 @@ class AddJobDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
+
         btn_cancel = QPushButton("Cancel")
+        btn_cancel.setObjectName("ghostBtn")
+
         btn_save = QPushButton("Save")
+        btn_save.setObjectName("accentBtn")
+
         btn_row.addWidget(btn_cancel)
         btn_row.addWidget(btn_save)
         root.addLayout(btn_row)
@@ -118,41 +143,46 @@ class AddJobDialog(QDialog):
             self.ent_company.setText(job.company)
             self.ent_role.setText(job.role)
             self.cmb_status.setCurrentText(job.status)
-            self.ent_link.setText(job.link or "")
-            self.txt_notes.setPlainText(job.notes or "")
+            link, notes = self._split_link(job.notes or "")
+            self.ent_link.setText(link)
+            self.txt_notes.setPlainText(notes)
 
-        # readable inputs
         self.setStyleSheet(f"""
             QDialog {{
                 background: {palette["bg_dark"]};
-                color: {palette["text"]};
-                border-radius: 18px;
             }}
             QLineEdit, QTextEdit, QComboBox {{
-                background: #F8F4EC;
-                color: #111;
-                border: 1px solid rgba(0,0,0,0.15);
+                background: rgba(0,0,0,0.18);
+                border: 1px solid rgba(255,255,255,0.10);
                 border-radius: 12px;
                 padding: 10px;
+                color: {palette["text"]};
                 font-weight: 650;
             }}
-            QTextEdit {{
-                padding: 12px;
-            }}
-            QComboBox QAbstractItemView {{
-                background: #F8F4EC;
+            QPushButton#accentBtn {{
+                background: {palette["accent"]};
                 color: #111;
-                selection-background-color: {palette["accent"]};
-                selection-color: #111;
-            }}
-            QPushButton {{
+                font-weight: 900;
                 padding: 10px 14px;
                 border-radius: 12px;
-                font-weight: 800;
+            }}
+            QPushButton#ghostBtn {{
+                background: rgba(255,255,255,0.10);
+                color: {palette["text"]};
+                font-weight: 850;
+                padding: 10px 12px;
+                border-radius: 12px;
+            }}
+            QPushButton#ghostBtn:hover {{
+                background: rgba(255,255,255,0.16);
             }}
         """)
-        btn_save.setStyleSheet(f"background:{palette['accent']}; color:#111;")
-        btn_cancel.setStyleSheet(f"background:{palette['panel']}; color:{palette['text']};")
+
+    def _split_link(self, notes: str):
+        if "Link:" in notes:
+            parts = notes.split("Link:", 1)
+            return parts[1].strip(), parts[0].strip()
+        return "", notes.strip()
 
     def _save(self):
         company = self.ent_company.text().strip()
@@ -165,21 +195,24 @@ class AddJobDialog(QDialog):
             QMessageBox.warning(self, "Missing", "Company and Job Title are required.")
             return
 
+        full_notes = f"{notes}\n\nLink: {link}".strip() if link else notes
+
         if self.job is None:
-            self.db.add_job(company, role, status, link=link, notes=notes)
+            # CareerDB has separate link column, but your list fetch is notes-based.
+            # Keep your existing convention; storing link inside notes is fine for now.
+            self.db.add_job(company, role, status, notes=full_notes)
         else:
-            self.db.edit_job(self.job.id, company, role, status, notes, link=link)
+            self.db.edit_job(self.job.id, company, role, status, full_notes, link="")
 
         self.accept()
 
 
 class JobCard(QFrame):
     """
-    Click vs drag threshold:
-    - release without dragging => open/edit
-    - drag => ghost preview + drop
+    Behaviour:
+    - Left click = open (edit dialog)
+    - Right click + move = drag (ghost)
     """
-
     def __init__(self, job: Job, on_open, on_delete):
         super().__init__()
         self.job = job
@@ -191,14 +224,15 @@ class JobCard(QFrame):
         self.setAcceptDrops(False)
         self.setCursor(Qt.PointingHandCursor)
 
+        self._rc_pressed = False
         self._press_pos: Optional[QPoint] = None
         self._drag_started = False
-        self._drag_threshold = 8
 
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 12, 14, 10)
         root.setSpacing(8)
 
+        # Top row: rank/suit (left) + delete (right)
         top = QHBoxLayout()
         rank = QLabel(f"{RANKS[job.status]} {SUITS[job.status]}")
         rank.setStyleSheet("font-weight:900; font-size:14px; color:#111;")
@@ -212,18 +246,20 @@ class JobCard(QFrame):
         top.addWidget(btn_x)
         root.addLayout(top)
 
+        # Centered info
         company = QLabel(job.company)
         company.setAlignment(Qt.AlignCenter)
-        company.setStyleSheet("font-weight:900; font-size:14px; color:#111;")
+        company.setStyleSheet("font-weight:950; font-size:14px; color:#111;")
 
         role = QLabel(job.role)
         role.setAlignment(Qt.AlignCenter)
         role.setWordWrap(True)
-        role.setStyleSheet("color:#333; font-weight:650;")
+        role.setStyleSheet("color:#333; font-weight:700;")
 
         root.addWidget(company)
         root.addWidget(role)
 
+        # Bottom-right suit/rank
         bot = QHBoxLayout()
         bot.addStretch(1)
         br = QLabel(f"{SUITS[job.status]} {RANKS[job.status]}")
@@ -231,28 +267,29 @@ class JobCard(QFrame):
         bot.addWidget(br)
         root.addLayout(bot)
 
-        handle = QLabel("⇅ DRAG")
+        # Drag strip hint
+        handle = QLabel("Right-drag to move")
         handle.setAlignment(Qt.AlignCenter)
         handle.setObjectName("DragHandle")
         handle.setFixedHeight(18)
         root.addWidget(handle)
 
         border = COLORS.get(job.status, "#555")
-        bg = "#F8F4EC"
-
-        if job.status == "Rejected":
-            bg = "#3b3b3b"
-            company.setStyleSheet("font-weight:900; font-size:14px; color:#CFCFCF;")
-            role.setStyleSheet("color:#BDBDBD; font-weight:650;")
-            rank.setStyleSheet("font-weight:900; font-size:14px; color:#CFCFCF;")
-            br.setStyleSheet("font-weight:900; font-size:12px; color:#CFCFCF;")
-            btn_x.setStyleSheet("background:transparent; border:none; font-size:18px; color:#9a9a9a;")
+        bg = "#F8F4EC" if job.status != "Rejected" else "#3b3b3b"
+        text_dim = "#888" if job.status == "Rejected" else "#111"
+        role_dim = "#777" if job.status == "Rejected" else "#333"
 
         self.setStyleSheet(f"""
             QFrame#JobCard {{
                 background: {bg};
                 border: 2px solid {border};
                 border-radius: 18px;
+            }}
+            QFrame#JobCard:hover {{
+                border: 2px solid rgba(231,195,91,0.85);
+            }}
+            QLabel {{
+                color: {text_dim};
             }}
             QLabel#DragHandle {{
                 background: {palette["accent2"]};
@@ -263,47 +300,60 @@ class JobCard(QFrame):
             }}
         """)
 
-    def _begin_drag(self):
+        # fix role label color after global label style
+        role.setStyleSheet(f"color:{role_dim}; font-weight:700;")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self._rc_pressed = True
+            self._press_pos = event.pos()
+            self._drag_started = False
+            event.accept()
+            return
+
+        if event.button() == Qt.LeftButton:
+            # click opens details (no drag on left)
+            self.on_open(self.job)
+            event.accept()
+            return
+
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        # only right-button drag
+        if not self._rc_pressed or self._press_pos is None:
+            return super().mouseMoveEvent(event)
+
+        # threshold
+        delta = event.pos() - self._press_pos
+        if not self._drag_started and (abs(delta.x()) > 6 or abs(delta.y()) > 6):
+            self._drag_started = True
+            self._start_drag()
+
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self._rc_pressed = False
+            self._press_pos = None
+            self._drag_started = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _start_drag(self):
         mime = QMimeData()
         mime.setText(str(self.job.id))
 
         drag = QDrag(self)
         drag.setMimeData(mime)
 
+        # Ghost preview
         pix = self.grab()
         drag.setPixmap(pix)
         drag.setHotSpot(pix.rect().center())
 
         drag.exec(Qt.MoveAction)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._press_pos = event.position().toPoint()
-            self._drag_started = False
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._press_pos is None:
-            return super().mouseMoveEvent(event)
-        if not (event.buttons() & Qt.LeftButton):
-            return super().mouseMoveEvent(event)
-
-        cur = event.position().toPoint()
-        delta = cur - self._press_pos
-
-        if not self._drag_started and (abs(delta.x()) > self._drag_threshold or abs(delta.y()) > self._drag_threshold):
-            self._drag_started = True
-            self._begin_drag()
-
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            if not self._drag_started:
-                self.on_open(self.job)
-            self._press_pos = None
-            self._drag_started = False
-        super().mouseReleaseEvent(event)
 
 
 class DropColumn(QFrame):
@@ -311,7 +361,6 @@ class DropColumn(QFrame):
         super().__init__()
         self.status = status
         self.on_drop_job_id = on_drop_job_id
-
         self.setAcceptDrops(True)
         self.setObjectName("DropColumn")
 
@@ -330,10 +379,11 @@ class DropColumn(QFrame):
         self.cards_layout.setSpacing(10)
         self.cards_layout.addStretch(1)
 
-        scroll = QScrollArea()
+        scroll = DropScrollArea(self)         
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(self.cards_container)
+
 
         root.addWidget(header)
         root.addWidget(scroll, 1)
@@ -341,13 +391,18 @@ class DropColumn(QFrame):
         self.setStyleSheet(f"""
             QFrame#DropColumn {{
                 background: {palette["bg_medium"]};
+                border: 1px solid rgba(255,255,255,0.08);
                 border-radius: 18px;
             }}
             QLabel#ColHeader {{
                 background: {COLORS[status]};
                 color: white;
                 border-radius: 14px;
-                font-weight: 900;
+                font-weight: 950;
+            }}
+            QFrame#DropColumn[dragOver="true"] {{
+                border: 1px solid rgba(231,195,91,0.75);
+                background: rgba(231,195,91,0.08);
             }}
         """)
 
@@ -363,9 +418,22 @@ class DropColumn(QFrame):
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():
+            self.setProperty("dragOver", True)
+            self.style().unpolish(self)
+            self.style().polish(self)
             event.acceptProposedAction()
 
+    def dragLeaveEvent(self, event):
+        self.setProperty("dragOver", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().dragLeaveEvent(event)
+
     def dropEvent(self, event):
+        self.setProperty("dragOver", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
         job_id_txt = event.mimeData().text().strip()
         if job_id_txt.isdigit():
             self.on_drop_job_id(int(job_id_txt), self.status)
@@ -381,13 +449,13 @@ class JobTrackerPage(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(12)
 
-        tip = QLabel("Tip: Click a card to edit. Click + drag to move it (ghost preview).")
-        tip.setStyleSheet(f"color:{palette['accent']}; padding: 6px 2px; font-weight:900;")
+        tip = QLabel("Tip: Left-click opens details • Right-drag moves cards with a real ghost preview 🃏")
+        tip.setStyleSheet(f"color:{palette['accent']}; padding: 6px 2px; font-weight:800;")
         root.addWidget(tip)
 
         header_row = QHBoxLayout()
         title = QLabel("🃏 Job Deck")
-        title.setStyleSheet("font-size:20px;font-weight:900;")
+        title.setStyleSheet("font-size:20px;font-weight:950;color:white;")
         header_row.addWidget(title)
         header_row.addStretch(1)
 
@@ -417,23 +485,31 @@ class JobTrackerPage(QWidget):
         jobs: list[Job] = []
         for r in rows:
             job_id, company, role, status, notes, date_added = r
-            # Your current get_all_jobs() doesn't return link, so we keep link empty here.
-            # If you want link on cards, update get_all_jobs to SELECT link too.
-            jobs.append(Job(job_id, company, role, status, link="", notes=notes or "", date_added=date_added or ""))
+            jobs.append(Job(job_id, company, role, status, notes or "", date_added or ""))
         return jobs
 
     def reload(self):
+        jobs = self._fetch_jobs()
+        self._job_by_id = {j.id: j for j in jobs}
+
         for col in self.columns.values():
             col.clear_cards()
 
-        for job in self._fetch_jobs():
+        for job in jobs:
             card = JobCard(job, on_open=self.open_details, on_delete=self.delete_job)
             self.columns[job.status].add_card(card)
+
 
     def add_job(self):
         dlg = AddJobDialog(self, self.db, job=None)
         if dlg.exec() == QDialog.Accepted:
             self.reload()
+            # We can’t easily know which row id was inserted without changing db.add_job return handling here,
+            # so log a generic "Added new job" or, if you want, fetch latest job:
+            jobs = self.db.get_all_jobs()
+            if jobs:
+                job_id, company, role, status, notes, date_added = jobs[0]
+                log_activity(f"Added {company} → {status} {SUITS[status]}{RANKS[status]}")
 
     def open_details(self, job: Job):
         dlg = AddJobDialog(self, self.db, job=job)
@@ -441,9 +517,22 @@ class JobTrackerPage(QWidget):
             self.reload()
 
     def delete_job(self, job: Job):
+        log_activity(f"Deleted {job.company} → removed 🃏")
         self.db.delete_job(job.id)
         self.reload()
 
+
     def on_drop_job(self, job_id: int, new_status: str):
+        old = getattr(self, "_job_by_id", {}).get(job_id)
+        old_status = old.status if old else None
+        company = old.company if old else "Job"
+        role = old.role if old else ""
+
+        if old_status and old_status != new_status:
+            log_activity(
+                f"Moved {company} {('('+role+')') if role else ''} → {new_status} {SUITS[new_status]}{RANKS[new_status]}"
+            )
+
         self.db.update_job_status(job_id, new_status)
         self.reload()
+

@@ -212,19 +212,35 @@ class CareerDB:
             )
             return cur.lastrowid
 
-    def list_upcoming_reminders(self, limit: int = 15) -> List[Tuple]:
-        today = datetime.now().strftime("%Y-%m-%d")
+    def list_reminders_for_date(self, date: str) -> List[Tuple]:
         with self._conn() as conn:
             cur = conn.cursor()
             cur.execute(
                 """SELECT id, title, description, date, time, category
-                   FROM reminders
-                   WHERE date >= ?
-                   ORDER BY date, time
-                   LIMIT ?""",
-                (today, limit),
+                FROM reminders
+                WHERE date = ?
+                ORDER BY time""",
+                (date,),
             )
             return cur.fetchall()
+        
+    def update_reminder(
+        self,
+        reminder_id: int,
+        title: str,
+        description: str,
+        date: str,
+        time: str,
+        category: str,
+    ) -> None:
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """UPDATE reminders
+                SET title=?, description=?, date=?, time=?, category=?
+                WHERE id=?""",
+                (title, description, date, time, category, reminder_id),
+            )
 
     def mark_notified(self, reminder_id: int) -> None:
         with self._conn() as conn:

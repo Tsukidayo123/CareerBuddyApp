@@ -5,37 +5,34 @@ from typing import Dict
 
 from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation
 from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QHBoxLayout,
-    QVBoxLayout,
-    QLabel,
-    QPushButton,
-    QFrame,
-    QStackedWidget,
-    QSizePolicy,
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
+    QFrame, QStackedWidget, QSizePolicy
 )
 
 from ui_qt.base import palette
 from ui_qt.tracker import JobTrackerPage
 
-# ✅ Use your real pages (these files exist in your ui_qt folder)
+# Your existing pages (keep these imports if the files exist)
 from ui_qt.filevault import FileVaultPage
 from ui_qt.whiteboard import WhiteboardPage
 from ui_qt.notepad import NotepadPage
+from ui_qt.coverletter import CoverLetterPage
+from ui_qt.analytics import AnalyticsPage
+from ui_qt.calendar import CalendarPage
 
 APP_NAME = "CareerBuddy"
 
 
 def _placeholder(title: str) -> QWidget:
     w = QFrame()
+    w.setObjectName("panel")
     lay = QVBoxLayout(w)
-    lay.setContentsMargins(18, 14, 18, 18)
+    lay.setContentsMargins(18, 16, 18, 18)
     lay.setSpacing(10)
     lab = QLabel(title)
-    lab.setStyleSheet("color: white; font-size: 18px; font-weight: 900;")
-    sub = QLabel("Placeholder page — we’ll wire this up next.")
-    sub.setStyleSheet(f"color: {palette['muted']}; font-weight: 650;")
+    lab.setStyleSheet("color:white;font-size:18px;font-weight:900;")
+    sub = QLabel("Coming soon.")
+    sub.setStyleSheet(f"color:{palette['muted']};font-weight:700;")
     lay.addWidget(lab)
     lay.addWidget(sub)
     lay.addStretch(1)
@@ -67,8 +64,8 @@ class Sidebar(QFrame):
         super().__init__()
         self.setObjectName("sidebar")
 
-        self.setMinimumWidth(68)
-        self.setMaximumWidth(240)
+        self.setMinimumWidth(72)
+        self.setMaximumWidth(250)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
         self._collapsed = False
@@ -99,10 +96,8 @@ class Sidebar(QFrame):
         lay.addWidget(self.btn_minimise)
 
         self.buttons: Dict[str, SidebarButton] = {}
-
         nav_def = [
             ("📋", "Job Tracker", "job_deck"),
-            ("🎣", "Job Catcher", "job_catcher"),
             ("📅", "Calendar", "calendar"),
             ("📊", "Analytics", "analytics"),
             ("✉️", "Cover Letter", "cover_letter"),
@@ -119,14 +114,14 @@ class Sidebar(QFrame):
         lay.addStretch(1)
 
         footer = QLabel("v6 • Qt Edition ✨")
-        footer.setStyleSheet(f"color: {palette['muted']}; font-weight: 650;")
+        footer.setStyleSheet(f"color:{palette['muted']};font-weight:700;")
         lay.addWidget(footer)
 
     def toggle(self):
         self._collapsed = not self._collapsed
 
         start = self.maximumWidth()
-        end = 68 if self._collapsed else 240
+        end = 72 if self._collapsed else 250
 
         self._anim.stop()
         self._anim.setStartValue(start)
@@ -163,30 +158,22 @@ class MainWindow(QMainWindow):
         content_layout.setContentsMargins(16, 14, 16, 16)
         content_layout.setSpacing(10)
 
-        # ✅ Remove tip here (JobTrackerPage already has it)
         self.stack = QStackedWidget()
         content_layout.addWidget(self.stack, 1)
-
         main.addWidget(content, 1)
 
-        # --------------------
-        # Real pages
-        # --------------------
+        # Pages
         self.page_job_deck = JobTrackerPage(self.db)
+        self.page_calendar = CalendarPage(self.db)
+        self.page_analytics = AnalyticsPage(self.db)
+        self.page_cover_letter = CoverLetterPage()
         self.page_file_vault = FileVaultPage(self.db, vault_dir)
         self.page_whiteboard = WhiteboardPage()
         self.page_notepad = NotepadPage(self.db)
-
-        # Still placeholders for now (until you build them)
-        self.page_job_catcher = _placeholder("🎣 Job Catcher")
-        self.page_calendar = _placeholder("📅 Calendar")
-        self.page_analytics = _placeholder("📊 Analytics")
-        self.page_cover_letter = _placeholder("✉️ Cover Letter")
         self.page_ai = _placeholder("🤖 AI Buddy")
 
         self.pages: Dict[str, int] = {
             "job_deck": self.stack.addWidget(self.page_job_deck),
-            "job_catcher": self.stack.addWidget(self.page_job_catcher),
             "calendar": self.stack.addWidget(self.page_calendar),
             "analytics": self.stack.addWidget(self.page_analytics),
             "cover_letter": self.stack.addWidget(self.page_cover_letter),
@@ -210,12 +197,12 @@ class MainWindow(QMainWindow):
             QFrame#content {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 rgba(255,255,255,0.04),
-                    stop:1 rgba(0,0,0,0.12)
+                    stop:1 rgba(0,0,0,0.14)
                 );
             }}
             QFrame#sidebar {{
-                background: rgba(0,0,0,0.30);
-                border-right: 1px solid rgba(255,255,255,0.08);
+                background: {palette["bg_medium"]};
+                border-right: 1px solid {palette["border_soft"]};
             }}
             QLabel#appTitle {{
                 color: white;
@@ -234,7 +221,7 @@ class MainWindow(QMainWindow):
             QPushButton#navBtn {{
                 text-align: left;
                 padding: 10px 12px;
-                border-radius: 12px;
+                border-radius: 14px;
                 background: rgba(255,255,255,0.06);
                 color: {palette["text"]};
                 font-weight: 850;
@@ -251,7 +238,7 @@ class MainWindow(QMainWindow):
                 color: {palette["text"]};
                 font-weight: 850;
                 padding: 10px 12px;
-                border-radius: 12px;
+                border-radius: 14px;
             }}
             QPushButton#ghostBtn:hover {{
                 background: rgba(255,255,255,0.16);
@@ -267,6 +254,11 @@ class MainWindow(QMainWindow):
         idx = self.pages.get(key)
         if idx is not None:
             self.stack.setCurrentIndex(idx)
+
+        page = self.stack.currentWidget()
+        if hasattr(page, "refresh"):
+            page.refresh()
+
 
     def minimise_to_card(self):
         self.hide()
