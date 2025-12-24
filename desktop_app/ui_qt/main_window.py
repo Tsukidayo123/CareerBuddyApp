@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QFrame, QStackedWidget, QSizePolicy
 )
+from fastapi import background
 
 from ui_qt.base import palette
 from ui_qt.tracker import JobTrackerPage
@@ -242,6 +243,11 @@ class MainWindow(QMainWindow):
             }}
             QPushButton#ghostBtn:hover {{
                 background: rgba(255,255,255,0.16);
+            }}
+            QFrame#panel {{
+                background: rgba(0,0,0,0.18);
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 16px;
             }}
         """)
 

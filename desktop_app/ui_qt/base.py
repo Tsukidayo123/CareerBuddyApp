@@ -5,12 +5,6 @@ from __future__ import annotations
 # Keep this stable so pages don't break with KeyErrors.
 
 palette = {
-    # Backgrounds
-    "bg_dark": "#0F1E1A",          # app background (deep green-black)
-    "bg_medium": "rgba(0,0,0,0.28)",  # panels / columns background
-    "panel": "rgba(0,0,0,0.22)",   # inner panels / cards
-    "panel_2": "rgba(255,255,255,0.06)",
-
     # Text
     "text": "#E9F3EE",
     "muted": "#9FB6AE",

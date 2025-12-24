@@ -150,7 +150,7 @@ class AnalyticsPage(QWidget):
         title_row = QHBoxLayout()
         title = QLabel("📊 Analytics")
         title.setStyleSheet("font-size:20px; font-weight:950; color:white;")
-        subtitle = QLabel("Overview + momentum (not a second tracker).")
+        subtitle = QLabel("Overview + momentum")
         subtitle.setStyleSheet(f"color:{palette['muted']}; font-weight:750;")
         title_row.addWidget(title)
         title_row.addSpacing(10)
