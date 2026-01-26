@@ -321,6 +321,10 @@ class WhiteboardPage(QWidget):
             b.setObjectName("swatch")
             b.setFixedSize(36, 36)
             b.setCursor(Qt.PointingHandCursor)
+
+            b.setProperty("swatchColor", hx)   # store color on the button
+            b.setStyleSheet(f"color: {hx};")   # apply icon color
+
             b.clicked.connect(lambda _=False, c=hx: self._set_color_hex(c))
             self.swatch_buttons.append(b)
             t.addWidget(b)
@@ -441,14 +445,19 @@ class WhiteboardPage(QWidget):
             }
             QPushButton#swatch {
                 background: rgba(255,255,255,0.10);
-                color: white;
                 font-size: 16px;
                 font-weight: 900;
                 border-radius: 12px;
                 border: 1px solid rgba(255,255,255,0.10);
             }
+
             QPushButton#swatch:hover {
                 background: rgba(255,255,255,0.18);
+            }
+                           
+            QPushButton#swatch[active="true"] {
+                background: rgba(231,195,91,0.22);
+                border: 1px solid rgba(231,195,91,0.45);
             }
         """)
 
@@ -476,6 +485,12 @@ class WhiteboardPage(QWidget):
     def _set_color_hex(self, hx: str):
         self.view.set_color(hx)
 
+        for b in self.swatch_buttons:
+            active = b.property("swatchColor") == hx
+            b.setProperty("active", active)
+            b.style().unpolish(b)
+            b.style().polish(b)
+    
         # If user picks a color while erasing, switch back to pen automatically
         if self.view.style.mode == "eraser":
             self._set_mode("pen")

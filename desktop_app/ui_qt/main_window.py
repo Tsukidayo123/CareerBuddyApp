@@ -20,6 +20,8 @@ from ui_qt.notepad import NotepadPage
 from ui_qt.coverletter import CoverLetterPage
 from ui_qt.analytics import AnalyticsPage
 from ui_qt.calendar import CalendarPage
+from ui_qt.aibuddy import AIBuddyPage
+
 
 APP_NAME = "CareerBuddy"
 
@@ -171,7 +173,7 @@ class MainWindow(QMainWindow):
         self.page_file_vault = FileVaultPage(self.db, vault_dir)
         self.page_whiteboard = WhiteboardPage()
         self.page_notepad = NotepadPage(self.db)
-        self.page_ai = _placeholder("🤖 AI Buddy")
+        self.page_ai = AIBuddyPage(self.db)
 
         self.pages: Dict[str, int] = {
             "job_deck": self.stack.addWidget(self.page_job_deck),

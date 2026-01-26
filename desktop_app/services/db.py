@@ -6,14 +6,16 @@ from typing import List, Tuple, Optional
 
 DB_FILE = Path(__file__).resolve().parents[2] / "career_buddy.db"
 
+
 class CareerDB:
-    """Typed, context‑managed CRUD layer."""
+    """Typed, context-managed CRUD layer."""
     def __init__(self, db_path: Path = DB_FILE):
         self.db_path = db_path
         self._init_schema()
 
     # --------------------------------------------------------------
     from contextlib import contextmanager
+
     @contextmanager
     def _conn(self):
         conn = sqlite3.connect(self.db_path)
@@ -61,6 +63,40 @@ class CareerDB:
                     time TEXT,
                     category TEXT,
                     notified INTEGER DEFAULT 0
+                );
+
+                -- ---------------------------
+                -- AI: conversations + memory
+                -- ---------------------------
+                CREATE TABLE IF NOT EXISTS ai_conversations(
+                    id INTEGER PRIMARY KEY,
+                    title TEXT,
+                    created_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS ai_messages(
+                    id INTEGER PRIMARY KEY,
+                    conversation_id INTEGER,
+                    ts TEXT,
+                    role TEXT,
+                    content TEXT,
+                    FOREIGN KEY(conversation_id) REFERENCES ai_conversations(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS ai_memories(
+                    id INTEGER PRIMARY KEY,
+                    ts TEXT,
+                    type TEXT,
+                    content TEXT,
+                    importance INTEGER DEFAULT 5,
+                    pinned INTEGER DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS ai_summaries(
+                    id INTEGER PRIMARY KEY,
+                    scope TEXT,
+                    ts TEXT,
+                    summary_text TEXT
                 );
                 """
             )
@@ -223,7 +259,7 @@ class CareerDB:
                 (date,),
             )
             return cur.fetchall()
-        
+
     def update_reminder(
         self,
         reminder_id: int,
@@ -251,3 +287,133 @@ class CareerDB:
         with self._conn() as conn:
             cur = conn.cursor()
             cur.execute("DELETE FROM reminders WHERE id=?", (reminder_id,))
+
+    # --------------------------------------------------------------
+    # ----- AI: conversations, messages, memory ---------------------
+    def ai_create_conversation(self, title: str = "New chat") -> int:
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO ai_conversations (title, created_at) VALUES (?, ?)",
+                (title, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            )
+            return cur.lastrowid
+
+    def ai_list_conversations(self, limit: int = 50) -> List[Tuple]:
+        # Keep signature stable; limit is capped by caller as needed
+        limit = int(limit)
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, title, created_at FROM ai_conversations ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+            return cur.fetchall()
+
+    def ai_add_message(self, conversation_id: int, role: str, content: str) -> int:
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO ai_messages (conversation_id, ts, role, content) VALUES (?, ?, ?, ?)",
+                (int(conversation_id), datetime.now().strftime("%Y-%m-%d %H:%M:%S"), role, content),
+            )
+            return cur.lastrowid
+
+    def ai_get_messages(self, conversation_id: int, limit: int = 30) -> List[Tuple]:
+        """Returns a list of (role, content, ts) ordered oldest->newest for last N messages."""
+        limit = int(limit)
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT role, content, ts
+                FROM ai_messages
+                WHERE conversation_id=?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (int(conversation_id), limit),
+            )
+            rows = cur.fetchall()
+            return list(reversed(rows))
+
+    def ai_add_memory(self, mem_type: str, content: str, importance: int = 5, pinned: int = 0) -> int:
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO ai_memories (ts, type, content, importance, pinned) VALUES (?,?,?,?,?)",
+                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(mem_type), str(content), int(importance), int(pinned)),
+            )
+            return cur.lastrowid
+
+    def ai_list_memories(self, pinned_first: bool = True, limit: int = 200) -> List[Tuple]:
+        limit = int(limit)
+        with self._conn() as conn:
+            cur = conn.cursor()
+            if pinned_first:
+                cur.execute(
+                    """
+                    SELECT id, ts, type, content, importance, pinned
+                    FROM ai_memories
+                    ORDER BY pinned DESC, importance DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, ts, type, content, importance, pinned
+                    FROM ai_memories
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            return cur.fetchall()
+
+    def ai_search_memories(self, query: str, limit: int = 30) -> List[Tuple]:
+        q = f"%{(query or '').strip()}%"
+        limit = int(limit)
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id, ts, type, content, importance, pinned
+                FROM ai_memories
+                WHERE content LIKE ?
+                ORDER BY pinned DESC, importance DESC, id DESC
+                LIMIT ?
+                """,
+                (q, limit),
+            )
+            return cur.fetchall()
+
+    def ai_set_memory_pinned(self, memory_id: int, pinned: int) -> None:
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE ai_memories SET pinned=? WHERE id=?", (int(pinned), int(memory_id)))
+
+    def ai_delete_memory(self, memory_id: int) -> None:
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM ai_memories WHERE id=?", (int(memory_id),))
+
+    def ai_get_latest_summary(self, scope: str = "global") -> str:
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT summary_text FROM ai_summaries WHERE scope=? ORDER BY id DESC LIMIT 1",
+                (str(scope),),
+            )
+            row = cur.fetchone()
+            return row[0] if row else ""
+
+    def ai_set_summary(self, scope: str, summary_text: str) -> int:
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO ai_summaries (scope, ts, summary_text) VALUES (?, ?, ?)",
+                (str(scope), datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(summary_text)),
+            )
+            return cur.lastrowid
